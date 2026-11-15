@@ -354,6 +354,33 @@ class WeatherRuleTests(unittest.TestCase):
         self.assertFalse(decision.accepted)
         self.assertTrue(decision.context["structured_region_authoritative"])
 
+    def test_district_without_city_uses_publication_title_or_summary(self):
+        for source in ("title", "headline", "metadata", "raw"):
+            with self.subTest(source=source):
+                kwargs = {
+                    "title": "示例省大雾黄色预警",
+                    "headline": "示例省气象台预警摘要",
+                    "metadata": {"district": "东岭县"},
+                    "weather_filter": {"enabled": True, "keywords": ["示例市"]},
+                }
+                text = "示例市东岭县大雾黄色预警"
+                if source in ("title", "headline"):
+                    kwargs[source] = text
+                else:
+                    kwargs.setdefault(source, {})["headline"] = text
+                self.assertTrue(self.evaluate(**kwargs).accepted)
+                kwargs["metadata"]["city"] = "外地市"
+                self.assertFalse(self.evaluate(**kwargs).accepted)
+
+    def test_district_without_city_does_not_use_incidental_body_mentions(self):
+        self.assertFalse(self.evaluate(
+            title="东岭县大雾黄色预警",
+            headline="东岭县气象台发布大雾黄色预警",
+            metadata={"district": "东岭县"},
+            raw={"description": "示例市气象部门提供参考。"},
+            weather_filter={"enabled": True, "keywords": ["示例市"]},
+        ).accepted)
+
     def test_other_event_type_still_skips_weather_rule(self):
         context = self.context()
         context.event.event = self.modules.domain.TsunamiEvent(

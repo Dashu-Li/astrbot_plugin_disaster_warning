@@ -1099,6 +1099,12 @@
             "hint": "留空推送全国，填写关键词后只推送对应地区。以“省州市区/都道府县”的级别填写，请勿填写国家或地区名",
             "default": []
           },
+          "excluded_regions": {
+            "description": "排除独立发布的地区",
+            "type": "list",
+            "hint": "填写完整行政区名，只排除该地区单独发布的预警。省、市级预警正文提到这些地区时仍可推送；留空不排除。可按会话覆盖。",
+            "default": []
+          },
           "min_color_level": {
             "description": "最低预警级别",
             "type": "string",

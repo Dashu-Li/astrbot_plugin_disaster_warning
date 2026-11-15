@@ -675,6 +675,17 @@ class ConfigValidator:
             ):
                 weather_filter["provinces"] = []
 
+            if "excluded_regions" in weather_filter:
+                excluded_regions = weather_filter.get("excluded_regions")
+                weather_filter["excluded_regions"] = (
+                    list(dict.fromkeys(
+                        region.strip() for region in excluded_regions
+                        if isinstance(region, str) and region.strip()
+                    ))
+                    if isinstance(excluded_regions, list)
+                    else []
+                )
+
             min_level = weather_filter.get("min_color_level")
             valid_levels = ["白色", "蓝色", "黄色", "橙色", "红色"]
             if min_level and min_level not in valid_levels:

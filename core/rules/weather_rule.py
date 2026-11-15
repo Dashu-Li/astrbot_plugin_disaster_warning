@@ -5,11 +5,104 @@
 
 from __future__ import annotations
 
+import re
+
 from ...utils.china_regions import province_short
 from ..domain.event_models import WeatherEvent
 from ..domain.event_payload import SourcePayload
 from .base_rule import BaseRule, RuleContext
 from .rule_result import RuleDecision
+
+
+_REGION_ENDINGS = (
+    "特别行政区", "自治区", "自治州", "自治县", "地区", "省", "市", "县", "区", "旗", "盟"
+)
+_STATION_PREFIX = re.compile(r"^\s*([\u4e00-\u9fff]{2,40}?)(?:气象台|气象局)")
+_PUBLISHING_PREFIX = re.compile(
+    r"^\s*([\u4e00-\u9fff]{2,40}?)(?:继续发布|更新发布|发布|解除|取消|变更|升级|降级)"
+)
+
+
+def _matches_issuing_region(issuer: str, excluded: str) -> bool:
+    """Match an issuing region, never a place mentioned in the warning body.
+
+    A full hierarchy may precede the region (省/市/县), but arbitrary suffix
+    matches must not turn 长丰县 into 丰县. Station names may omit the final
+    administrative suffix, e.g. 肥东气象台 versus 肥东县.
+    """
+    names = [excluded]
+    if not issuer.endswith(_REGION_ENDINGS):
+        for ending in _REGION_ENDINGS:
+            if excluded.endswith(ending) and len(excluded) > len(ending):
+                names.append(excluded[: -len(ending)])
+                break
+    elif not excluded.endswith(_REGION_ENDINGS):
+        names.extend(excluded + ending for ending in _REGION_ENDINGS)
+    for name in names:
+        if not issuer.endswith(name):
+            continue
+        prefix = issuer[: -len(name)]
+        if not prefix or prefix.endswith(_REGION_ENDINGS):
+            return True
+    return False
+
+
+def _excluded_issuing_region(domain_event, sources, excluded_regions) -> str:
+    """Prefer the original station header over title wrappers or geo fields.
+
+    Province/city warnings can mention excluded counties in their coverage.
+    Only a leading issuing station, a publication title or finally a structured
+    district is considered. Conflicting issuers are kept conservatively.
+    """
+    def consensus(issuers):
+        found = ""
+        for issuer in dict.fromkeys(issuers):
+            match = next(
+                (region for region in excluded_regions
+                 if _matches_issuing_region(issuer, region)),
+                "",
+            )
+            if not match:
+                return ""
+            found = found or match
+        return found
+
+    def extract(texts, pattern):
+        return [
+            match.group(1)
+            for text in texts
+            if isinstance(text, str)
+            if (match := pattern.match(text))
+        ]
+
+    # 正文开头的气象台发布句最接近原始发布机构，不扫描正文中的覆盖地区。
+    issuers = extract(
+        (source.get("description") for source in sources), _STATION_PREFIX
+    )
+    if issuers:
+        return consensus(issuers)
+
+    title_fields = [
+        getattr(domain_event, "title", ""),
+        getattr(domain_event, "headline", ""),
+    ]
+    title_fields.extend(
+        source.get(key) for source in sources for key in ("title", "headline")
+    )
+    issuers = extract(title_fields, _STATION_PREFIX)
+    if issuers:
+        return consensus(issuers)
+    issuers = extract(title_fields, _PUBLISHING_PREFIX)
+    if issuers:
+        return consensus(issuers)
+
+    districts = [
+        source.get("district").strip()
+        for source in sources
+        if isinstance(source.get("district"), str)
+        and source.get("district").strip()
+    ]
+    return consensus(districts)
 
 
 class WeatherRule(BaseRule):
@@ -102,6 +195,27 @@ class WeatherRule(BaseRule):
                 },
             )
 
+        excluded_regions = weather_filter.get("excluded_regions", [])
+        excluded_regions = (
+            [
+                region.strip()
+                for region in excluded_regions
+                if isinstance(region, str) and region.strip()
+            ]
+            if isinstance(excluded_regions, list)
+            else []
+        )
+        if excluded_regions:
+            excluded_region = _excluded_issuing_region(
+                domain_event, (domain_metadata, metadata, payload), excluded_regions
+            )
+            if excluded_region:
+                return RuleDecision.reject(
+                    reason="气象发布地区排除过滤",
+                    detail=f"预警由已排除的地区 {excluded_region} 单独发布",
+                    context={"excluded_region": excluded_region},
+                )
+
         # 地区匹配需检查所有标题、摘要和完整正文，不能让非空摘要遮蔽正文。
         # 仅收集字符串，且用换行隔开字段，避免字段间拼出并不存在的地区关键词。
         headline_text = "\n".join(
@@ -166,8 +280,24 @@ class WeatherRule(BaseRule):
             # 明确的市/区县归属优先，正文偶然提及其他城市不能扩大覆盖范围。
             # 只有省级提示时不足以排除具体城市，仍需完整正文兜底。
             has_affected_region = bool(city_val or district_val)
+            # 区县可能没有父级城市字段；此时发布标题/摘要可补充市名，
+            # 完整正文仍不参与有明确区县归属的兜底，避免偶然提及外地。
+            publication_text = "\n".join(
+                text.split("预警", 1)[0]
+                for text in (
+                    getattr(domain_event, "title", ""),
+                    getattr(domain_event, "headline", ""),
+                    *(source.get(key, "")
+                      for source in (domain_metadata, metadata, payload)
+                      for key in ("title", "headline")),
+                )
+                if isinstance(text, str)
+            )
+            publication_hits = [keyword for keyword in keywords if keyword in publication_text]
             matched = bool(geo_hits) or (
-                not has_affected_region and bool(title_hits or headline_hits)
+                not city_val and bool(publication_hits)
+            ) or (
+                not has_affected_region and bool(headline_hits)
             )
             if not matched:
                 return RuleDecision.reject(
