@@ -101,6 +101,7 @@ class WeatherAggregationService:
         self._force_send_all_sessions: set[str] = set()
         self._flush_locks = defaultdict(asyncio.Lock)
         self._rate_limit_deadlines: dict[str, float] = {}
+        self._closed = False
 
     def set_flush_callback(self, callback) -> None:
         """注入推送回调。
@@ -290,6 +291,9 @@ class WeatherAggregationService:
             return False
 
         # 将事件加入缓冲区
+        previous = buffer.get(event_id)
+        if previous is not None and previous.bypass_node_fill:
+            entry.bypass_node_fill = True
         buffer[event_id] = entry
         # 记录缓冲时的会话级聚合时间窗口（供延期回收重排定时器使用，
         # 保证与会话级配置一致，而非回退到全局配置）。
@@ -328,7 +332,7 @@ class WeatherAggregationService:
         """
         delay = max(delay, self._rate_limit_deadlines.get(session, 0) - time.monotonic())
         # 已有定时器则不重置
-        if self._in_flush_batch or session in self._flush_timers:
+        if self._closed or self._in_flush_batch or session in self._flush_timers:
             return
 
         try:
@@ -353,8 +357,11 @@ class WeatherAggregationService:
 
     async def _flush_session(self, session: str) -> None:
         """执行指定会话的缓冲区推送。"""
+        if self._closed:
+            return
         async with self._flush_locks[session]:
-            await self._flush_session_locked(session)
+            if not self._closed:
+                await self._flush_session_locked(session)
 
     async def _flush_session_locked(self, session: str) -> None:
         # 取消定时器
@@ -630,6 +637,8 @@ class WeatherAggregationService:
 
     def _spawn_flush_task(self, session: str) -> None:
         """创建后台刷新任务并持有引用，任务结束时自动清理并记录异常。"""
+        if self._closed:
+            return
         task = asyncio.create_task(self._flush_session(session))
         self._background_tasks.add(task)
 
@@ -657,13 +666,25 @@ class WeatherAggregationService:
         空批次（缓冲区无积压或全部被过滤）时清空批次快照，
         避免大屏显示上一次停机遗留的过期"最后转发"统计。
         """
+        if self._closed:
+            return
+        self._closed = True
         self._in_flush_batch = True
         self._flush_batch_count = 0
         self._flush_batch_sessions = []
         try:
+            for timer in self._flush_timers.values():
+                timer.cancel()
+            self._flush_timers.clear()
+            # Queued flushes stop at the closed guard; an in-flight send may
+            # finish before the final shutdown batch acquires its session lock.
+            tasks = list(self._background_tasks)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
             sessions = list(self._buffers.keys())
             for session in sessions:
-                await self._flush_session(session)
+                async with self._flush_locks[session]:
+                    await self._flush_session_locked(session)
         finally:
             self._in_flush_batch = False
             # 空批次（缓冲区无积压或全部被规则过滤）必须清空全部"最后转发"

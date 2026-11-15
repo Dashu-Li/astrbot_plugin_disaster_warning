@@ -500,6 +500,12 @@ class EventPipeline:
                     # 该节点发送成功：节点内实际加入内容的条目即为成功发出
                     sent_entry_count += len(batch)
                 except WeatherRateLimitedError as e:
+                    # These entries already qualified for a send node. Quota
+                    # recovery must not make them wait to fill a node again.
+                    for entry, _ in built_messages[
+                        batch_idx * max_batch : node_count * max_batch
+                    ]:
+                        entry.bypass_node_fill = True
                     self._weather_aggregation.defer_rate_limited_entries(
                         session,
                         [entry for entry, _ in built_messages[batch_idx * max_batch :]],

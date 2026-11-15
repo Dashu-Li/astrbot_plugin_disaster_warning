@@ -264,6 +264,47 @@ class WeatherPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((sent, deferred, failed), (1, [], []))
         self.assertEqual(self.context.send_message.await_count, 1)
 
+    async def test_full_node_quota_recovery_sends_remaining_nineteen_after_filter(self):
+        self.settings.update(fill_nodes=True, max_batch_size=20, rate_limit_max_messages=1)
+        await self.sender.send(SESSION, MessageChain([Plain("already delivered")]),
+                               weather_rate_limit=self.settings)
+        self.context.send_message.reset_mock()
+        entries = self.entries(20)
+        self.assertEqual(await self.flush(entries), (0, [], []))
+        queued = list(self.aggregation._buffers[SESSION].values())
+        self.assertEqual(len(queued), 20)
+        self.assertTrue(all(entry.bypass_node_fill for entry in queued))
+        self.context.send_message.assert_not_awaited()
+
+        filtered_id = entries[0].event.id
+        self.manager.evaluate_push_decision.side_effect = lambda event, **kwargs: (
+            SimpleNamespace(accepted=event.id != filtered_id, reason="synthetic filter", detail="")
+        )
+        self.now += 900
+        self.aggregation._rate_limit_deadlines[SESSION] = 0
+        await self.aggregation._flush_session(SESSION)
+        self.assertEqual(self.context.send_message.await_count, 1)
+        nodes = self.context.send_message.await_args.args[1].chain[0]
+        self.assertEqual(len(nodes.nodes), 20)  # Header plus nineteen accepted alerts.
+        self.assertFalse(self.queued_ids())
+        self.assertNotIn(SESSION, self.aggregation._deferred_stall_counts)
+
+    async def test_same_id_update_keeps_quota_node_fill_bypass_until_recovery(self):
+        self.settings.update(fill_nodes=True, max_batch_size=20, rate_limit_max_messages=1)
+        old = self.entries(1)[0]
+        self.aggregation.defer_rate_limited(old.event, SESSION, self.config, 900)
+        updated = self.entries(1)[0]
+        updated.event.event.title = "合成更新黄色预警"
+        self.assertTrue(self.aggregation.should_aggregate(updated.event, SESSION, self.config))
+        queued = self.aggregation._buffers[SESSION][old.event.id]
+        self.assertIs(queued.event, updated.event)
+        self.assertTrue(queued.bypass_node_fill)
+        self.now += 900
+        self.aggregation._rate_limit_deadlines[SESSION] = 0
+        await self.aggregation._flush_session(SESSION)
+        self.assertEqual(self.context.send_message.await_count, 1)
+        self.assertFalse(self.queued_ids())
+
 
 if __name__ == "__main__":
     unittest.main()

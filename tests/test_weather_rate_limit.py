@@ -427,6 +427,57 @@ class WeatherAggregationQuotaTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.service._background_tasks)
         self.assertIn(entry.event.id, self.service._buffers[GROUP_A])
 
+    async def test_shutdown_retires_queued_flush_and_rejects_later_refreshes(self):
+        entry = self.entry()
+        callback = AsyncMock(return_value=(1, [], []))
+        self.service.set_flush_callback(callback)
+        self.service.defer_rate_limited_entries(GROUP_A, [entry], 900)
+        self.service._spawn_flush_task(GROUP_A)
+        queued = list(self.service._background_tasks)
+        self.assertEqual(len(queued), 1)
+        await self.service.flush_all()
+        self.assertTrue(all(task.done() for task in queued))
+        self.assertFalse(self.service._background_tasks)
+        self.assertFalse(self.service._flush_timers)
+        callback.assert_not_awaited()
+
+        self.clock.advance(900)
+        self.service._spawn_flush_task(GROUP_A)
+        self.service._schedule_flush(GROUP_A, 0)
+        await self.service._flush_session(GROUP_A)
+        await self.service.flush_all()
+        callback.assert_not_awaited()
+        self.assertFalse(self.service._background_tasks)
+        self.assertFalse(self.service._flush_timers)
+        self.assertIn(entry.event.id, self.service._buffers[GROUP_A])
+
+    async def test_shutdown_waits_for_inflight_flush_without_sending_twice(self):
+        entry = self.entry()
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def callback(session, entries, config, *, mode):
+            started.set()
+            await release.wait()
+            return len(entries), [], []
+
+        callback = AsyncMock(side_effect=callback)
+        self.service.set_flush_callback(callback)
+        self.service._buffers[GROUP_A] = {entry.event.id: entry}
+        self.service._spawn_flush_task(GROUP_A)
+        await asyncio.wait_for(started.wait(), timeout=1)
+        shutdown = asyncio.create_task(self.service.flush_all())
+        try:
+            await asyncio.sleep(0)
+            self.assertFalse(shutdown.done())
+        finally:
+            release.set()
+            await asyncio.wait_for(shutdown, timeout=1)
+        callback.assert_awaited_once()
+        self.assertFalse(self.service._background_tasks)
+        self.assertFalse(self.service._flush_timers)
+        self.assertNotIn(GROUP_A, self.service._buffers)
+        self.assertEqual(self.service.last_flush_batch_count, 1)
+
     async def test_late_deferral_uses_original_receipt_time_before_newer_buffer(self):
         from datetime import timedelta
         old, new = self.entry(), self.entry()
