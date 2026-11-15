@@ -1,4 +1,4 @@
-"""Public/synthetic CMA regressions using the real parser and delivery dedup.
+"""Synthetic CMA regressions using the real parser and delivery dedup.
 
 Private package skeletons avoid plugin startup. Only logger/telemetry sinks are
 stubbed; parsing, identities, clocks and delivery comparison are actual modules.
@@ -19,8 +19,8 @@ import unittest
 SOURCE = Path(__file__).resolve().parents[1]
 PREFIX = "_weather_delivery_regression"
 BODY = (
-    "长丰县气象台2026年11月14日19时08分发布大雾黄色预警信号。"
-    "今天夜里到明天早晨我县朱巷、陶楼、岗集等镇（区）将出现能见度小于500米的大雾，"
+    "示例县气象台2026年01月02日19时08分发布大雾黄色预警信号。"
+    "今天夜里到明天早晨我县甲镇、乙镇、丙镇等镇（区）将出现能见度小于500米的大雾，"
     "局地不足200米，出行请注意交通安全。"
 )
 NOTE = "（预警信息来源：国家预警信息发布中心）"
@@ -65,11 +65,11 @@ def load_modules():
 
 def payload(*, packaged=False, **changes):
     value = {
-        "id": "34012141600000_20261114190900",
-        "title": "安徽省合肥市长丰县发布大雾黄色预警" + ("信号" if packaged else ""),
+        "id": "synthetic-warning-001",
+        "title": "示例省示例市示例县发布大雾黄色预警" + ("信号" if packaged else ""),
         "description": BODY + (NOTE if packaged else ""),
-        "headline": "" if packaged else "长丰县气象台发布大雾黄色预警[III级/较重]",
-        "originTime": "2026-11-14T19:09:00" if packaged else "2026-11-14T19:08:00",
+        "headline": "" if packaged else "示例县气象台发布大雾黄色预警[III级/较重]",
+        "originTime": "2026-01-02T19:09:00" if packaged else "2026-01-02T19:08:00",
         "type": "p0005003",
     }
     value.update(changes)
@@ -100,7 +100,7 @@ class WeatherDeliveryTests(unittest.TestCase):
     def remember(self, event):
         self.dedup.remember(SESSION, event, CONFIG)
 
-    def test_public_same_id_packaging_versions_deliver_once_in_both_orders(self):
+    def test_synthetic_same_id_packaging_versions_deliver_once_in_both_orders(self):
         for reverse in (False, True):
             with self.subTest(reverse=reverse):
                 self.setUp()
@@ -115,7 +115,7 @@ class WeatherDeliveryTests(unittest.TestCase):
         data = payload(packaged=True)
         original = deepcopy(data)
         event = self.event(data)
-        expected = datetime(2026, 11, 14, 11, 8, tzinfo=timezone.utc)
+        expected = datetime(2026, 1, 2, 11, 8, tzinfo=timezone.utc)
         self.assertEqual(event.event.effective_at, expected)
         self.assertEqual(event.identity.published_at, expected)
         self.assertEqual(event.metadata["issue_time"], expected)
@@ -139,7 +139,7 @@ class WeatherDeliveryTests(unittest.TestCase):
                 self.setUp()
                 parser = self.parser(source)
                 active = payload(is_cancel=False, status="active")
-                cancelled = payload(is_cancel=True, status="cancelled", originTime="2026-11-14T19:10:00")
+                cancelled = payload(is_cancel=True, status="cancelled", originTime="2026-01-02T19:10:00")
                 for data in (active, cancelled, active):
                     event = parser.parse_message(data)
                     self.assertIsNotNone(event)
@@ -148,27 +148,25 @@ class WeatherDeliveryTests(unittest.TestCase):
                     self.assertIsNone(parser.parse_message(data))
 
     def test_cancellation_with_old_body_keeps_current_structured_clock(self):
-        event = self.event(payload(is_cancel=True, originTime="2026-11-14T20:10:00"))
-        self.assertEqual(event.event.effective_at, datetime(2026, 11, 14, 20, 10))
+        event = self.event(payload(is_cancel=True, originTime="2026-01-02T20:10:00"))
+        self.assertEqual(event.event.effective_at, datetime(2026, 1, 2, 20, 10))
 
     def test_real_business_changes_survive_both_parser_and_delivery_dedup(self):
         changes = [
             {"description": BODY.replace("500米", "300米")},
             {"description": BODY + "新增影响地区。"},
-            {"description": BODY.replace("朱巷", "吴山")},
-            {"description": BODY.replace("19时08分", "19时09分"), "originTime": "2026-11-14T19:09:00"},
-            {"title": "安徽省合肥市长丰县发布大雾橙色预警"},
+            {"description": BODY.replace("甲镇", "丁镇")},
+            {"description": BODY.replace("19时08分", "19时09分"), "originTime": "2026-01-02T19:09:00"},
+            {"title": "示例省示例市示例县发布大雾橙色预警"},
             {"level": "橙色"}, {"type": "p0005002"},
-            {"headline": "长丰县气象台补充说明：高速交通风险增大"},
-            {"headline": "长丰县气象台发布大雾黄色预警[II级/严重]"},
-            {"effective": "2026-11-14T19:09:00"},
-            {"effectiveTime": "2026-11-14T19:10:00"},
-            {"onset": "2026-11-14T19:10:00"},
-            {"relieveTime": "2026-11-15T08:00:00"},
-            {"expires": "2026-11-15T08:00:00"},
-            {"expiry": "2026-11-15T08:00:00"},
-            {"province": "安徽省"}, {"city": "合肥市"}, {"district": "长丰县"},
-            {"adcode": "340121"}, {"latitude": 32.123}, {"longitude": 117.123},
+            {"headline": "示例县气象台补充说明：高速交通风险增大"},
+            {"headline": "示例县气象台发布大雾黄色预警[II级/严重]"},
+            {"effective": "2026-01-02T19:09:00"},
+            {"effectiveTime": "2026-01-02T19:10:00"},
+            {"onset": "2026-01-02T19:10:00"},
+            {"relieveTime": "2026-01-03T08:00:00"},
+            {"expires": "2026-01-03T08:00:00"},
+            {"expiry": "2026-01-03T08:00:00"},
             {"status": "test"}, {"is_cancel": True},
         ]
         for source in ("jian", "fan"):
@@ -183,12 +181,193 @@ class WeatherDeliveryTests(unittest.TestCase):
                     self.assertIsNotNone(updated)
                     self.assertFalse(self.duplicate(updated))
 
+    def test_verified_same_id_auxiliary_completion_does_not_deliver_again(self):
+        changes = [
+            {"province": "示例省"}, {"city": "示例市"}, {"district": "示例县"},
+            {"adcode": "000001"}, {"latitude": 12.345}, {"longitude": 123.456},
+            {"level": "黄色"}, {"level": "III级/较重"},
+            {"province": "示例省", "city": "示例市", "district": "示例县",
+             "adcode": "000001", "latitude": 12.345, "longitude": 123.456,
+             "level": "黄色"},
+        ]
+        for source in ("jian", "fan"):
+            for change in changes:
+                for reverse in (False, True):
+                    with self.subTest(source=source, change=change, reverse=reverse):
+                        self.setUp()
+                        versions = [payload(), payload(**change)]
+                        if reverse:
+                            versions.reverse()
+                        parser = self.parser(source)
+                        first = parser.parse_message(versions[0])
+                        self.assertIsNotNone(first)
+                        self.remember(first)
+                        self.assertIsNone(parser.parse_message(versions[1]))
+                        self.assertTrue(self.duplicate(self.event(versions[1], source=source)))
+
+    def test_verified_missing_and_matching_weather_code_are_equivalent(self):
+        for source in ("jian", "fan"):
+            for reverse in (False, True):
+                with self.subTest(source=source, reverse=reverse):
+                    self.setUp()
+                    versions = [payload(type=""), payload(type="p0005003")]
+                    if reverse:
+                        versions.reverse()
+                    parser = self.parser(source)
+                    first = parser.parse_message(versions[0])
+                    self.assertIsNotNone(first)
+                    self.remember(first)
+                    self.assertIsNone(parser.parse_message(versions[1]))
+                    self.assertTrue(self.duplicate(self.event(versions[1], source=source)))
+
+    def test_same_id_relay_auxiliaries_are_ignored_across_sources_in_both_orders(self):
+        completed = payload(
+            packaged=True, province="示例省", city="示例市", district="示例县",
+            adcode="000001", latitude=12.345, longitude=123.456,
+            level="III级/较重", type="p0005003",
+        )
+        for first_source, second_source in (("jian", "fan"), ("fan", "jian")):
+            for reverse in (False, True):
+                with self.subTest(sources=(first_source, second_source), reverse=reverse):
+                    self.setUp()
+                    versions = [payload(type=""), completed]
+                    if reverse:
+                        versions.reverse()
+                    first = self.event(versions[0], source=first_source)
+                    second = self.event(versions[1], source=second_source)
+                    self.remember(first)
+                    self.assertTrue(self.duplicate(second))
+                    self.assertEqual(second.payload.raw, versions[1])
+                    self.assertEqual(second.metadata["description"], versions[1]["description"])
+                    self.assertEqual(second.metadata["district"], versions[1].get("district", ""))
+
+    def test_different_ids_keep_auxiliary_geography_significant(self):
+        for source in ("jian", "fan"):
+            with self.subTest(source=source):
+                self.setUp()
+                self.remember(self.event(source=source))
+                other = payload(id="synthetic-warning-002", district="示例县")
+                self.assertFalse(self.duplicate(self.event(other, source=source)))
+
+    def test_all_fifteen_standard_weather_types_and_colors_require_exact_product(self):
+        hazards = {
+            "0001": "台风", "0002": "暴雨", "0003": "高温", "0004": "寒潮",
+            "0005": "大雾", "0006": "暴雪", "0007": "大风", "0008": "沙尘暴",
+            "0009": "冰雹", "0010": "干旱", "0011": "道路结冰", "0012": "雷电",
+            "0013": "霜冻", "0014": "霾", "0015": "雷雨大风",
+        }
+        colors = {"1": "红色", "2": "橙色", "3": "黄色", "4": "蓝色"}
+        for number, hazard in hazards.items():
+            for digit, color in colors.items():
+                with self.subTest(hazard=hazard, color=color):
+                    product = hazard + color + "预警"
+                    value = payload(
+                        type="", headline="",
+                        title="示例省示例市示例县发布" + product,
+                        description=BODY.replace("大雾黄色预警", product),
+                    )
+                    parser = self.parser()
+                    self.assertIsNotNone(parser.parse_message(value))
+                    self.assertIsNone(parser.parse_message({**value, "type": "p" + number + "00" + digit}))
+
+    def test_unknown_or_conflicting_codes_and_levels_remain_significant(self):
+        changes = [
+            {"type": "p0005002"}, {"type": "p0002003"},
+            {"type": "p9999003"}, {"type": "p0016003"},
+            {"type": "p0000003"}, {"type": "11B17_yellow"},
+            {"type": "unknown-code"}, {"level": "橙色"},
+            {"level": "II级/严重"}, {"level": "unknown-level"},
+        ]
+        for source in ("jian", "fan"):
+            for change in changes:
+                with self.subTest(source=source, change=change):
+                    self.setUp()
+                    parser = self.parser(source)
+                    first = parser.parse_message(payload())
+                    self.assertIsNotNone(first)
+                    self.remember(first)
+                    self.assertIsNotNone(parser.parse_message(payload(**change)))
+                    self.assertFalse(self.duplicate(self.event(payload(**change), source=source)))
+
+    def test_unverified_body_keeps_auxiliary_and_level_changes_significant(self):
+        changes = [
+            {"province": "示例省"}, {"city": "示例市"}, {"district": "示例县"},
+            {"adcode": "000001"}, {"latitude": 12.345}, {"longitude": 123.456},
+            {"level": "黄色"}, {"type": "p0005003"},
+        ]
+        for source in ("jian", "fan"):
+            for change in changes:
+                with self.subTest(source=source, change=change):
+                    self.setUp()
+                    value = payload(description="预计今夜有大雾，请注意安全。", type="")
+                    parser = self.parser(source)
+                    first = parser.parse_message(value)
+                    self.assertIsNotNone(first)
+                    self.remember(first)
+                    self.assertIsNotNone(parser.parse_message({**value, **change}))
+                    self.assertFalse(self.duplicate(self.event({**value, **change}, source=source)))
+
+    def test_auxiliary_completion_does_not_hide_real_affected_area_changes(self):
+        for source in ("jian", "fan"):
+            with self.subTest(source=source):
+                self.setUp()
+                self.remember(self.event(source=source))
+                changed = payload(
+                    description=BODY.replace("甲镇、乙镇、丙镇", "丁镇、戊镇、己镇"),
+                    province="示例省", city="示例市", district="示例县",
+                )
+                self.assertFalse(self.duplicate(self.event(changed, source=source)))
+
+    def test_explicit_effective_and_expiry_addition_and_removal_are_significant(self):
+        for source in ("jian", "fan"):
+            for field in ("effective", "effectiveTime", "onset", "expires", "relieveTime", "expiry", "endTime"):
+                for reverse in (False, True):
+                    with self.subTest(source=source, field=field, reverse=reverse):
+                        self.setUp()
+                        # Onset different from the verified issue clock is real
+                        # validity information; never infer a 12-hour expiry.
+                        value = "2026-01-02T19:09:00" if field in ("effective", "effectiveTime", "onset") else "2026-01-03T08:00:00"
+                        versions = [payload(), payload(**{field: value})]
+                        if reverse:
+                            versions.reverse()
+                        parser = self.parser(source)
+                        first = parser.parse_message(versions[0])
+                        self.assertIsNotNone(first)
+                        self.remember(first)
+                        self.assertIsNotNone(parser.parse_message(versions[1]))
+                        self.assertFalse(self.duplicate(self.event(versions[1], source=source)))
+
+    def test_effective_equal_to_verified_issue_clock_is_only_completion(self):
+        for source in ("jian", "fan"):
+            for field in ("effective", "effectiveTime", "onset"):
+                for reverse in (False, True):
+                    with self.subTest(source=source, field=field, reverse=reverse):
+                        self.setUp()
+                        versions = [payload(), payload(**{field: "2026-01-02T19:08:00"})]
+                        if reverse:
+                            versions.reverse()
+                        parser = self.parser(source)
+                        first = parser.parse_message(versions[0])
+                        self.assertIsNotNone(first)
+                        self.remember(first)
+                        self.assertIsNone(parser.parse_message(versions[1]))
+                        self.assertTrue(self.duplicate(self.event(versions[1], source=source)))
+
+    def test_unknown_future_business_fields_are_not_discarded(self):
+        business = self.modules.parser._weather_business_fields(payload(), "china_weather_jianproject")
+        normalize = self.modules.parser.canonical_weather_report
+        first = normalize({**business, "future_advisory": "original"}, effective_is_issued=True)
+        second = normalize({**business, "future_advisory": "changed"}, effective_is_issued=True)
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        self.assertNotEqual(first, second)
+
     def test_explicit_effective_and_expiry_changes_never_use_issue_clock_tolerance(self):
         for field in ("effective", "effectiveTime", "onset", "expires", "relieveTime", "expiry"):
             with self.subTest(field=field):
                 self.setUp()
-                self.remember(self.event(payload(**{field: "2026-11-14T19:09:00"})))
-                self.assertFalse(self.duplicate(self.event(payload(**{field: "2026-11-14T19:10:00"}))))
+                self.remember(self.event(payload(**{field: "2026-01-02T19:09:00"})))
+                self.assertFalse(self.duplicate(self.event(payload(**{field: "2026-01-02T19:10:00"}))))
 
     def test_unknown_source_note_is_not_stripped(self):
         self.remember(self.event())
@@ -198,16 +377,16 @@ class WeatherDeliveryTests(unittest.TestCase):
 
     def test_unknown_headline_changes_remain_significant(self):
         self.remember(self.event())
-        for headline in ("风险提示：道路交通影响增大", "长丰县气象台解除大雾黄色预警"):
+        for headline in ("风险提示：道路交通影响增大", "示例县气象台解除大雾黄色预警"):
             with self.subTest(headline=headline):
                 self.assertFalse(self.duplicate(self.event(payload(headline=headline))))
 
     def test_untrusted_body_time_preserves_origin_clock_behavior(self):
         cases = [
             "转述：" + BODY,
-            BODY.replace("2026年11月14日", "11月14日"),
-            BODY.replace("2026年11月14日", "2026年11月31日"),
-            BODY.replace("长丰县气象台", "其他县气象台"),
+            BODY.replace("2026年01月02日", "01月02日"),
+            BODY.replace("2026年01月02日", "2026年01月32日"),
+            BODY.replace("示例县气象台", "其他县气象台"),
             BODY.replace("黄色预警", "橙色预警"),
             BODY.replace("发布", "讨论"),
             "预计今夜有大雾，请注意安全。",
@@ -215,15 +394,15 @@ class WeatherDeliveryTests(unittest.TestCase):
         for body in cases:
             with self.subTest(body=body):
                 self.setUp()
-                data = payload(description=body, originTime="2026-11-14T19:09:00")
+                data = payload(description=body, originTime="2026-01-02T19:09:00")
                 first = self.event(data)
-                self.assertEqual(first.event.effective_at, datetime(2026, 11, 14, 19, 9))
+                self.assertEqual(first.event.effective_at, datetime(2026, 1, 2, 19, 9))
                 self.remember(first)
-                self.assertFalse(self.duplicate(self.event({**data, "originTime": "2026-11-14T19:10:00"})))
+                self.assertFalse(self.duplicate(self.event({**data, "originTime": "2026-01-02T19:10:00"})))
 
     def test_valid_body_with_unrelated_structured_clock_is_not_trusted(self):
-        event = self.event(payload(originTime="2026-11-15T19:09:00"))
-        self.assertEqual(event.event.effective_at, datetime(2026, 11, 15, 19, 9))
+        event = self.event(payload(originTime="2026-01-03T19:09:00"))
+        self.assertEqual(event.event.effective_at, datetime(2026, 1, 3, 19, 9))
 
     def test_missing_issue_clock_does_not_enable_normalization(self):
         business = self.modules.parser._weather_business_fields(payload(originTime=""), "china_weather_jianproject")
@@ -237,8 +416,8 @@ class WeatherDeliveryTests(unittest.TestCase):
     def test_different_ids_keep_original_origin_clock_comparison(self):
         # Display clocks may now agree; distinct IDs still need the original
         # strict structured timestamp evidence before they can be aliased.
-        first = self.event(payload(originTime="2026-11-14T19:09:00"))
-        second = self.event(payload(id="other-warning-id", originTime="2026-11-14T19:08:00"))
+        first = self.event(payload(originTime="2026-01-02T19:09:00"))
+        second = self.event(payload(id="other-warning-id", originTime="2026-01-02T19:08:00"))
         self.assertEqual(first.event.effective_at, second.event.effective_at)
         self.remember(first)
         self.assertFalse(self.duplicate(second))
@@ -247,7 +426,7 @@ class WeatherDeliveryTests(unittest.TestCase):
         self.remember(self.event())
         self.assertFalse(self.duplicate(self.event(payload(
             id="other-warning-id", description=BODY.replace("19时08分", "19时10分"),
-            originTime="2026-11-14T19:10:00",
+            originTime="2026-01-02T19:10:00",
         ))))
 
     def test_pending_packaging_duplicates_suppress_without_committing_delivery(self):

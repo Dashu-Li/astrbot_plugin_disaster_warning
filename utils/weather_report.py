@@ -28,6 +28,33 @@ _TITLE = re.compile(
 )
 _SEVERITY = {"白色": None, "蓝色": "IV级/一般", "黄色": "III级/较重",
              "橙色": "II级/严重", "红色": "I级/特别严重"}
+# The standard fifteen p-code types and colors mirror the local
+# weather_alarm_code_map. Keep this helper pure: importing the presenter package
+# from parsers would introduce a circular import. Private/unknown codes retain
+# strict comparison, as do known codes contradicting the validated body.
+_P_TYPES = {
+    "0001": "台风", "0002": "暴雨", "0003": "高温", "0004": "寒潮",
+    "0005": "大雾", "0006": "暴雪", "0007": "大风", "0008": "沙尘暴",
+    "0009": "冰雹", "0010": "干旱", "0011": "道路结冰", "0012": "雷电",
+    "0013": "霜冻", "0014": "霾", "0015": "雷雨大风",
+}
+_P_COLORS = {"1": "红色", "2": "橙色", "3": "黄色", "4": "蓝色"}
+_STANDARD_P_CODE = re.compile(r"p(?P<type>\d{4})00(?P<color>[1-4])")
+_AUXILIARY_FIELDS = ("province", "city", "district", "adcode", "latitude", "longitude")
+
+
+def _canonical_weather_code(value: Any, product: str) -> Any:
+    """Only missing or provably equivalent standard codes are packaging."""
+    if value in (None, ""):
+        return ""
+    if isinstance(value, str):
+        match = _STANDARD_P_CODE.fullmatch(value)
+        if match is not None:
+            hazard = _P_TYPES.get(match["type"])
+            color = _P_COLORS[match["color"]]
+            if hazard is not None and product == hazard + color + "预警":
+                return ""
+    return value
 
 
 def canonical_weather_report(
@@ -36,8 +63,11 @@ def canonical_weather_report(
     """Return a known-format comparison, or None to retain strict behavior.
 
     A complete issuing-station/date/action/product header, matching title and
-    valid source issue time within ten minutes are all required. Explicit
-    effective/expiry times and all geographic/status fields stay significant.
+    valid source issue time within ten minutes are all required. Effective clocks
+    differing from publication, expiry, conflicting levels/codes and status stay
+    significant.
+    Once the body establishes the issuer and affected area, auxiliary geographic
+    metadata and consistent color/code completion do not create another release.
     Cancellation keeps its structured clock, even if it carries an old body.
     """
     if fields.get("is_cancel") or fields.get("status") == "cancelled":
@@ -68,6 +98,17 @@ def canonical_weather_report(
         return None
 
     normalized = dict(fields)
+    # Keep unknown business fields significant; ignore only the six declared
+    # relay auxiliaries, without changing the payload, display or region filter.
+    for key in _AUXILIARY_FIELDS:
+        normalized.pop(key, None)
+    color = next(color for color in _SEVERITY
+                 if header["product"].endswith(color + "预警"))
+    if fields.get("level") in (None, "", color, _SEVERITY[color]):
+        normalized["level"] = color
+    normalized["weather_code"] = _canonical_weather_code(
+        fields.get("weather_code"), header["product"]
+    )
     if body.endswith(_SOURCE_NOTE):
         body = body[:-len(_SOURCE_NOTE)].rstrip()
     normalized["description"] = body

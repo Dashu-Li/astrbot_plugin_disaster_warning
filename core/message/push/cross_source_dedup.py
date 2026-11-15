@@ -350,7 +350,7 @@ class CrossSourceDeduplicator:
                     and current.get("same_id_report") is not None
                     and previous.get("same_id_report") is not None):
                 return all(current[key] == previous[key] for key in (
-                    "same_id_report", "geo", "cancelled", "final"
+                    "same_id_report", "cancelled", "final"
                 ))
             return all(
                 current[key] == previous[key]
